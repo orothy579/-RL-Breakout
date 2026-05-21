@@ -103,7 +103,13 @@ def plot_learning_curves(runs: list[dict[str, Any]], out_path: Path) -> None:
         return
 
     for label, members in sorted(groups.items()):
-        all_steps = sorted({int(t) for r in members for t in (r["timesteps"] or [])})
+        all_steps = sorted(
+            {
+                int(t)
+                for r in members
+                for t in np.asarray(r["timesteps"]).ravel().tolist()
+            }
+        )
         grid = np.array(all_steps)
         if len(grid) == 0:
             continue
