@@ -1,0 +1,51 @@
+# Vanilla DQN (Mnih et al., 2015) — Breakout v5 baseline.
+#
+# 모든 ablation/대조군 YAML은 이 파일을 `inherits:` 로 끌어와서
+# 필요한 키만 덮어쓰면 됩니다.
+
+algo:
+  name: dqn
+  features:
+    double_q: false
+    dueling: false
+  kwargs:
+    policy: CnnPolicy
+    learning_rate: 1.0e-4
+    buffer_size: 250000          # uint8 4x84x84 기준 약 7 GiB. RAM에 맞게 조정 가능.
+    learning_starts: 50000
+    batch_size: 32
+    train_freq: [4, step]
+    gradient_steps: 1
+    target_update_interval: 1000
+    exploration_fraction: 0.1
+    exploration_initial_eps: 1.0
+    exploration_final_eps: 0.01
+    max_grad_norm: 10.0
+    gamma: 0.99
+    optimize_memory_usage: true
+    replay_buffer_kwargs:
+      handle_timeout_termination: false   # optimize_memory_usage=true 와 동시 사용 불가 제약
+
+env:
+  env_id: ALE/Breakout-v5
+  n_envs: 8
+  frame_stack: 4
+  env_kwargs:
+    frameskip: 1
+    repeat_action_probability: 0.0
+    full_action_space: false
+  wrapper_kwargs:
+    terminal_on_life_loss: true          # 학습 시 신호 강화 (DeepMind 표준)
+    clip_reward: true
+
+eval_env:
+  n_envs: 1
+  wrapper_kwargs:
+    terminal_on_life_loss: false         # 평가 시 진짜 에피소드/스코어 사용
+    clip_reward: false
+
+train:
+  total_timesteps: 1000000
+  checkpoint_freq: 200000
+  eval_freq: 50000
+  n_eval_episodes: 5

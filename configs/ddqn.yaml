@@ -1,0 +1,7 @@
+# Double DQN (van Hasselt et al., AAAI 2016)
+# 변경 포인트: target 계산 시 next action은 online net argmax, 값은 target net 으로 평가.
+inherits: dqn_baseline.yaml
+
+algo:
+  features:
+    double_q: true

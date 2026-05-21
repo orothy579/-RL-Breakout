@@ -1,0 +1,12 @@
+# Dueling DQN (Wang et al., ICML 2016)
+# 변경 포인트: 공유 CNN 특징을 V(s) head 와 A(s,a) head 로 분기.
+# Q(s,a) = V(s) + (A(s,a) - mean_a A(s,a))
+inherits: dqn_baseline.yaml
+
+algo:
+  features:
+    dueling: true
+  kwargs:
+    policy_kwargs:
+      # Dueling 분기 내부 hidden layer (Wang 2016 의 512 fc 를 따른 값)
+      net_arch: [512]
