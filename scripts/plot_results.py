@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""experiments/* 디렉토리들을 훑어 학습/평가 결과를 한 장에 정리한다."""
+"""experiments 디렉토리를 훑어 학습/평가 결과를 figures & tables 로 정리한다."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,44 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import yaml
+from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
+
+
+def _slugify(name: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9._-]+", "_", name).strip("_") or "runs"
+
+
+def _group_name_under_experiments(path: Path) -> str | None:
+    """``experiments/<group>/...`` 에서 ``group`` 이름을 반환."""
+    parts = path.resolve().parts
+    if "experiments" not in parts:
+        return None
+    idx = parts.index("experiments")
+    if idx + 1 < len(parts):
+        return parts[idx + 1]
+    return None
+
+
+def _output_slug(experiment_paths: list[Path], runs: list[dict[str, Any]]) -> str:
+    """출력 파일명 접미사: ``experiments`` 바로 아래 디렉터리명(들)."""
+    labels: list[str] = []
+    for root in experiment_paths:
+        name = _group_name_under_experiments(root)
+        if name and name not in labels:
+            labels.append(name)
+    if not labels:
+        for r in runs:
+            name = _group_name_under_experiments(r["run_dir"])
+            if name and name not in labels:
+                labels.append(name)
+    if not labels:
+        return "runs"
+    return _slugify("_".join(sorted(labels)))
+
+
+def _slugged_path(path: Path, slug: str) -> Path:
+    return path.with_name(f"{path.stem}_{slug}{path.suffix}")
 
 
 def _read_run(run_dir: Path) -> dict[str, Any] | None:
@@ -75,6 +114,18 @@ def _extract_seed(name: str) -> int | None:
     return None
 
 
+def _parse_eval_summary(raw: dict[str, Any]) -> dict[str, float | int]:
+    """``summary.json`` / ``EvalSummary`` 필드를 플롯용으로 정규화."""
+    keys = ("mean", "std", "median", "min", "max", "ci95_low", "ci95_high")
+    missing = [k for k in keys if k not in raw]
+    if missing:
+        raise KeyError(f"summary missing fields: {missing}")
+    return {
+        "n_episodes": int(raw.get("n_episodes", 0)),
+        **{k: float(raw[k]) for k in keys},
+    }
+
+
 def _group_label(run: dict[str, Any]) -> str:
     algo = run["algo"]
     feats = run["features"]
@@ -87,6 +138,47 @@ def _group_label(run: dict[str, Any]) -> str:
         if tags:
             algo = "dqn[" + "+".join(tags) + "]"
     return algo
+
+
+def _collect_runs(paths: list[Path]) -> list[dict[str, Any]]:
+    """실험 루트(들)에서 run 디렉토리를 수집.
+
+    - ``experiments/2m`` 처럼 그룹 폴더면 하위 run 을 스캔
+    - ``experiments/2m/2026-..._dqn_seed7`` 처럼 run 하나만 지정해도 동작
+    """
+    runs: list[dict[str, Any]] = []
+    seen: set[Path] = set()
+
+    def _add(run_dir: Path) -> None:
+        key = run_dir.resolve()
+        if key in seen:
+            return
+        rec = _read_run(run_dir)
+        if rec is not None:
+            runs.append(rec)
+            seen.add(key)
+
+    for root in paths:
+        root = root.resolve()
+        if not root.exists():
+            print(f"[plot] skip (not found): {root}")
+            continue
+
+        if (root / "config.yaml").exists():
+            _add(root)
+            continue
+
+        for child in sorted(root.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            if (child / "config.yaml").exists():
+                _add(child)
+                continue
+            for sub in sorted(child.iterdir()):
+                if sub.is_dir() and (sub / "config.yaml").exists():
+                    _add(sub)
+
+    return runs
 
 
 def plot_learning_curves(runs: list[dict[str, Any]], out_path: Path) -> None:
@@ -137,28 +229,132 @@ def plot_learning_curves(runs: list[dict[str, Any]], out_path: Path) -> None:
 
 
 def plot_eval_distribution(runs: list[dict[str, Any]], out_path: Path) -> None:
-    by_label: dict[str, list[float]] = {}
+    """``summary.json`` 의 에피소드 통계(mean/std/median/min/max/ci95)를 시각화."""
+    grouped: dict[str, list[dict[str, float | int]]] = {}
     for r in runs:
+        if not r["summaries"]:
+            continue
         label = _group_label(r)
-        for s in r["summaries"]:
-            by_label.setdefault(label, []).append(float(s["mean"]))
+        for raw in r["summaries"]:
+            try:
+                stats = _parse_eval_summary(raw)
+            except KeyError as exc:
+                print(f"[plot] skip summary in {r['name']}: {exc}")
+                continue
+            grouped.setdefault(label, []).append(stats)
 
-    if not by_label:
+    if not grouped:
         print("[plot] eval_runs/*/summary*.json 이 없으면 분포 plot 을 건너뜁니다.")
         return
 
-    labels = sorted(by_label.keys())
-    data = [by_label[l] for l in labels]
+    labels = sorted(grouped.keys())
+    x_centers = np.arange(len(labels), dtype=float)
+    bar_half = 0.14
 
-    plt.figure(figsize=(7, 5))
-    plt.boxplot(data, tick_labels=labels, showmeans=True)
-    plt.ylabel("Eval mean episode reward (per run)")
-    plt.title("Final-policy evaluation — distribution across seeds/runs")
-    plt.grid(True, axis="y", alpha=0.3)
-    plt.tight_layout()
+    fig, ax = plt.subplots(figsize=(max(8, len(labels) * 1.6), 5.5))
+
+    for i, label in enumerate(labels):
+        stats_list = grouped[label]
+        n = len(stats_list)
+        if n == 1:
+            xs = [float(x_centers[i])]
+        else:
+            spread = min(0.35, 0.18 * n)
+            xs = np.linspace(
+                x_centers[i] - spread / 2, x_centers[i] + spread / 2, n
+            ).tolist()
+
+        for xi, stats in zip(xs, stats_list, strict=True):
+            xi = float(xi)
+            # min–max (episode rewards)
+            ax.vlines(
+                xi,
+                stats["min"],
+                stats["max"],
+                colors="#333333",
+                linewidth=1.8,
+                zorder=2,
+            )
+            # 95% bootstrap CI of mean (from evaluate.py)
+            ax.add_patch(
+                Rectangle(
+                    (xi - bar_half, stats["ci95_low"]),
+                    2 * bar_half,
+                    stats["ci95_high"] - stats["ci95_low"],
+                    facecolor="#A8D4F0",
+                    edgecolor="#1F77B4",
+                    linewidth=1,
+                    alpha=0.55,
+                    zorder=3,
+                )
+            )
+            # ±1 std around mean (episode reward spread)
+            ax.errorbar(
+                xi,
+                stats["mean"],
+                yerr=stats["std"],
+                fmt="none",
+                ecolor="#666666",
+                elinewidth=1.2,
+                capsize=4,
+                capthick=1.2,
+                zorder=4,
+            )
+            # median
+            ax.hlines(
+                stats["median"],
+                xi - bar_half * 1.1,
+                xi + bar_half * 1.1,
+                colors="#FF7F0E",
+                linewidth=2.5,
+                zorder=5,
+            )
+            # mean
+            ax.scatter(
+                [xi],
+                [stats["mean"]],
+                marker="^",
+                s=72,
+                c="#2CA02C",
+                edgecolors="#2CA02C",
+                zorder=6,
+            )
+
+    legend_handles = [
+        Rectangle(
+            (0, 0),
+            1,
+            1,
+            facecolor="#A8D4F0",
+            edgecolor="#1F77B4",
+            label="Blue band: 95% CI of mean (bootstrap)",
+        ),
+        Line2D([0], [0], color="#666666", linewidth=1.2, label="Gray caps: mean ± std"),
+        Line2D([0], [0], color="#333333", linewidth=1.8, label="Vertical line: min–max"),
+        Line2D([0], [0], color="#FF7F0E", linewidth=2.5, label="Orange line: median"),
+        Line2D(
+            [0],
+            [0],
+            marker="^",
+            color="#2CA02C",
+            linestyle="None",
+            markersize=8,
+            label="Green triangle: mean",
+        ),
+    ]
+    ax.legend(handles=legend_handles, loc="upper right", fontsize=8, framealpha=0.95)
+
+    ax.set_xticks(x_centers)
+    ax.set_xticklabels(labels)
+    ax.set_ylabel("Episode reward")
+    ax.set_title(
+        "Final-policy evaluation — episode statistics (from summary.json, n eval episodes)"
+    )
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, dpi=150)
-    plt.close()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
     print(f"[plot] saved {out_path}")
 
 
@@ -172,7 +368,9 @@ def write_runs_summary(runs: list[dict[str, Any]], out_path: Path) -> None:
         last_eval_std = (
             float(r["ep_rew_std"][-1]) if r["ep_rew_std"] is not None else float("nan")
         )
-        last_step = int(timesteps[-1]) if timesteps is not None and len(timesteps) > 0 else None
+        last_step = (
+            int(timesteps[-1]) if timesteps is not None and len(timesteps) > 0 else None
+        )
         rows.append(
             {
                 "run": r["name"],
@@ -196,38 +394,95 @@ def write_runs_summary(runs: list[dict[str, Any]], out_path: Path) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Aggregate experiments/* into figures & tables.")
-    p.add_argument("--experiments-root", type=Path, default=ROOT / "experiments")
-    p.add_argument("--figures-dir", type=Path, default=ROOT / "reports" / "figures")
-    p.add_argument("--tables-dir", type=Path, default=ROOT / "reports" / "tables")
+    p = argparse.ArgumentParser(
+        description=(
+            "Aggregate experiment runs into figures & tables "
+            "(filename suffix = experiments/<group> name)."
+        )
+    )
+    p.add_argument(
+        "--experiments",
+        nargs="+",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "집계할 실험 디렉토리(복수 가능). "
+            "예: experiments/2m experiments/1m 또는 단일 run 경로. "
+            "미지정 시 experiments/ 전체를 스캔"
+        ),
+    )
+    p.add_argument(
+        "--reports-dir",
+        type=Path,
+        default=ROOT / "reports",
+        help="출력 루트 (figures/, tables/ 하위에 저장)",
+    )
+    p.add_argument(
+        "--slug",
+        type=str,
+        default=None,
+        help=(
+            "출력 파일명 접미사 (기본: --experiments 경로의 experiments/ 하위 "
+            "디렉터리명, 복수면 정렬 후 '_' 로 연결)"
+        ),
+    )
+    p.add_argument(
+        "--training-seed",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "학습 시드가 N 인 run 만 포함 (run 폴더명의 seedN). "
+            "지정 시 slug 에 _seedN 이 자동 추가 (--slug 가 없을 때)"
+        ),
+    )
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    root = args.experiments_root.resolve()
-    runs: list[dict[str, Any]] = []
-    for child in sorted(root.iterdir()):
-        if not child.is_dir():
-            continue
-        if child.name.startswith("."):
-            continue
-        rec = _read_run(child)
-        if rec is not None:
-            runs.append(rec)
-        for sub in sorted(child.iterdir()):
-            if sub.is_dir() and (sub / "config.yaml").exists():
-                rec2 = _read_run(sub)
-                if rec2 is not None:
-                    runs.append(rec2)
 
+    if args.experiments:
+        experiment_paths = [p.resolve() for p in args.experiments]
+    else:
+        experiment_paths = [ROOT / "experiments"]
+
+    reports = args.reports_dir.resolve()
+    figures_dir = reports / "figures"
+    tables_dir = reports / "tables"
+
+    runs = _collect_runs(experiment_paths)
     if not runs:
-        print(f"[plot] no runs under {root}")
+        print(f"[plot] no runs under {experiment_paths}")
         return
 
-    plot_learning_curves(runs, args.figures_dir / "learning_curves.png")
-    plot_eval_distribution(runs, args.figures_dir / "eval_distribution.png")
-    write_runs_summary(runs, args.tables_dir / "runs_summary.csv")
+    if args.training_seed is not None:
+        before = len(runs)
+        runs = [r for r in runs if r["seed"] == args.training_seed]
+        print(
+            f"[plot] training-seed={args.training_seed}: "
+            f"{len(runs)}/{before} runs kept"
+        )
+        if not runs:
+            print("[plot] no runs left after --training-seed filter")
+            return
+
+    slug = _slugify(args.slug) if args.slug else _output_slug(experiment_paths, runs)
+    if args.training_seed is not None and args.slug is None:
+        slug = f"{slug}_seed{args.training_seed}"
+
+    print(f"[plot] slug        = {slug}")
+    print(f"[plot] experiments = {', '.join(str(p) for p in experiment_paths)}")
+    print(f"[plot] runs found  = {len(runs)}")
+
+    plot_learning_curves(
+        runs, _slugged_path(figures_dir / "learning_curves.png", slug)
+    )
+    plot_eval_distribution(
+        runs, _slugged_path(figures_dir / "eval_distribution.png", slug)
+    )
+    write_runs_summary(runs, _slugged_path(tables_dir / "runs_summary.csv", slug))
 
 
 if __name__ == "__main__":

@@ -27,6 +27,6 @@ def build_a2c(
         tensorboard_log=tensorboard_log,
         seed=seed,
         device=device,
-        verbose=1,
+        verbose=0,
         **kwargs,
     )

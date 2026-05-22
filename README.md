@@ -177,16 +177,29 @@ python scripts/play.py --run experiments/<run_dir> --n-episodes 3 --window-scale
 여러 실험 결과를 모아 learning curve, 최종 평가 분포, 요약 CSV를 생성합니다.
 
 ```bash
+# 특정 실험 묶음만 (2M step 실험 등)
+python scripts/plot_results.py --experiments experiments/2m --reports-dir reports
+
+# 여러 묶음 비교
+python scripts/plot_results.py --experiments experiments/2m experiments/1m
+
+# 미지정 시 experiments/ 전체 스캔
 python scripts/plot_results.py
 ```
 
-출력:
+출력 (파일명 접미사 = `experiments/` 바로 아래 디렉터리명, 예: `2m`):
 
 ```text
-reports/figures/learning_curves.png
-reports/figures/eval_distribution.png
-reports/tables/runs_summary.csv
+reports/figures/learning_curves_2m.png
+reports/figures/eval_distribution_2m.png   # summary.json 통계 (CI/std/median/min-max)
+
+# 학습 시드 7 만 비교할 때
+python scripts/plot_results.py --experiments experiments/2m --training-seed 7
+# → eval_distribution_2m_seed7.png
+reports/tables/runs_summary_2m.csv
 ```
+
+여러 묶음을 한 번에 그리면 `1m_2m` 처럼 연결됩니다. 접미사를 직접 지정하려면 `--slug my_label` 을 사용합니다.
 
 ## Suggested Experiment Plan
 
