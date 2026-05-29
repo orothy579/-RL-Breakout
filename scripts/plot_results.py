@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -91,12 +92,14 @@ def _read_run(run_dir: Path) -> dict[str, Any] | None:
 
     summaries = [json.loads(p.read_text(encoding="utf-8")) for p in summary_files]
 
+    algo_name = cfg.get("algo", {}).get("name", "?")
     return {
         "run_dir": run_dir,
         "name": run_dir.name,
-        "algo": cfg.get("algo", {}).get("name", "?"),
+        "algo": algo_name,
         "features": cfg.get("algo", {}).get("features", {}) or {},
         "seed": _extract_seed(run_dir.name),
+        "variant": _extract_config_variant(run_dir.name, algo_name),
         "timesteps": timesteps,
         "ep_rew_mean": results_mean,
         "ep_rew_std": results_std,
@@ -112,6 +115,24 @@ def _extract_seed(name: str) -> int | None:
             except ValueError:
                 return None
     return None
+
+
+def _extract_config_variant(run_name: str, algo: str) -> str:
+    """run 폴더명 ``<date>_<time>_<config_stem>_seed<N>`` 에서 variant 태그 추출.
+
+    ``dqn_baseline`` / ``dqn`` → "baseline"
+    ``dqn_buffer_500k``        → "buffer_500k"
+    ``ppo_clip_0.2``           → "clip_0.2"
+    """
+    parts = run_name.split("_")
+    if len(parts) < 4 or not parts[-1].startswith("seed"):
+        return ""
+    config_stem = "_".join(parts[2:-1])
+    if config_stem in (algo, f"{algo}_baseline"):
+        return "baseline"
+    if config_stem.startswith(f"{algo}_"):
+        return config_stem[len(algo) + 1 :]
+    return config_stem
 
 
 def _parse_eval_summary(raw: dict[str, Any]) -> dict[str, float | int]:
@@ -137,6 +158,9 @@ def _group_label(run: dict[str, Any]) -> str:
             tags.append("dueling")
         if tags:
             algo = "dqn[" + "+".join(tags) + "]"
+    variant = run.get("variant", "")
+    if variant and variant != "baseline":
+        return f"{algo}[{variant}]"
     return algo
 
 
@@ -471,6 +495,9 @@ def main() -> None:
     slug = _slugify(args.slug) if args.slug else _output_slug(experiment_paths, runs)
     if args.training_seed is not None and args.slug is None:
         slug = f"{slug}_seed{args.training_seed}"
+
+    ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    slug = f"{slug}_{ts}"
 
     print(f"[plot] slug        = {slug}")
     print(f"[plot] experiments = {', '.join(str(p) for p in experiment_paths)}")

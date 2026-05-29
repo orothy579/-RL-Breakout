@@ -1,0 +1,7 @@
+# DQN axis A — small replay buffer.
+# 효과: 최근 transition 비중↑ → on-policy 가까워짐. decorrelation↓로 분산↑ 가능.
+inherits: ../dqn_baseline.yaml
+
+algo:
+  kwargs:
+    buffer_size: 100000

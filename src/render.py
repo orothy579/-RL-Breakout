@@ -40,7 +40,8 @@ def play_opencv_scaled(
     *,
     n_episodes: int = 3,
     deterministic: bool = True,
-    scale: int = 4,
+    scale: float = 4,
+    aspect_stretch: float = 1.6,
     render_fps: float = 30.0,
 ) -> list[float]:
     if not is_vecenv_wrapped(env, VecMonitor):
@@ -61,11 +62,18 @@ def play_opencv_scaled(
             frame = env.render(mode="rgb_array")
             if frame is None:
                 continue
-            img = cast(np.ndarray, frame[0])
-            if scale > 1:
+            arr = np.asarray(frame)
+            if arr.ndim == 4:
+                arr = arr[0]
+            elif arr.ndim != 3:
+                continue
+            img = cast(np.ndarray, arr)
+            if scale > 1 or aspect_stretch != 1.0:
                 h, w = img.shape[:2]
                 img = cv2.resize(
-                    img, (w * scale, h * scale), interpolation=cv2.INTER_NEAREST
+                    img,
+                    (int(w * scale * aspect_stretch), int(h * scale)),
+                    interpolation=cv2.INTER_NEAREST,
                 )
             cv2.imshow("Breakout Agent", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             if cv2.waitKey(1) & 0xFF == ord("q"):

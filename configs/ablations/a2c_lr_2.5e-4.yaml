@@ -1,0 +1,8 @@
+# A2C axis B (standalone) — PPO 와 동일한 학습률.
+# 효과: RMSProp 기본 7e-4 가 Atari A2C 에 너무 큰지 검증.
+# n_envs * n_steps = 40 step 마다 업데이트라 PPO 보다 잡음이 큼 → 더 작은 LR 이 안정적일 수 있음.
+inherits: ../a2c.yaml
+
+algo:
+  kwargs:
+    learning_rate: 2.5e-4

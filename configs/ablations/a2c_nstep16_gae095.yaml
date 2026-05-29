@@ -1,0 +1,8 @@
+# A2C axis A — n_steps + GAE 결합.
+# 효과: 긴 rollout + 지수가중 평균 → PPO 의 advantage 추정 조건에 근접.
+inherits: ../a2c.yaml
+
+algo:
+  kwargs:
+    n_steps: 16
+    gae_lambda: 0.95

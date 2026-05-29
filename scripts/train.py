@@ -51,6 +51,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="rich 진행바 비활성화 (CI/원격 로그용)",
     )
+    p.add_argument(
+        "--evaluate-after-train",
+        action="store_true",
+        help="학습 완료 후 자동으로 100-episode 평가 실행 (best_model 우선)",
+    )
     return p.parse_args()
 
 
@@ -131,6 +136,18 @@ def main() -> None:
         print(f"[train] saved   : {final_path}")
         print(f"[train] best at : {best_model_dir / 'best_model.zip'}")
         print(f"[train] tensorboard: tensorboard --logdir {tb_dir}")
+
+    if args.evaluate_after_train:
+        from scripts.evaluate import evaluate_run
+
+        print("[train] running post-train evaluation (n_eval_episodes=100)...")
+        evaluate_run(
+            run_dir,
+            n_eval_episodes=100,
+            eval_seed=0,
+            deterministic=True,
+            device=args.device,
+        )
 
 
 if __name__ == "__main__":

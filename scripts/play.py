@@ -32,7 +32,13 @@ def parse_args() -> argparse.Namespace:
         default=True,
     )
     p.add_argument("--device", type=str, default="auto")
-    p.add_argument("--window-scale", type=int, default=None, metavar="N")
+    p.add_argument("--window-scale", type=float, default=None, metavar="N")
+    p.add_argument(
+        "--aspect-stretch",
+        type=float,
+        default=1.6,
+        help="가로 stretch 배율 (Atari NTSC PAR=1.6). 1.0 이면 raw 픽셀.",
+    )
     p.add_argument("--render-fps", type=float, default=30.0)
     return p.parse_args()
 
@@ -81,6 +87,7 @@ def main() -> None:
                 n_episodes=args.n_episodes,
                 deterministic=args.deterministic,
                 scale=scale,
+                aspect_stretch=args.aspect_stretch,
                 render_fps=args.render_fps,
             )
             if rewards:

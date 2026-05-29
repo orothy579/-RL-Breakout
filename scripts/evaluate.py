@@ -90,6 +90,82 @@ def _resolve_run_artifacts(
     return args.model.resolve(), args.config.resolve(), None
 
 
+def evaluate_run(
+    run_dir: Path,
+    *,
+    n_eval_episodes: int = 50,
+    eval_seed: int = 0,
+    deterministic: bool = True,
+    device: str = "auto",
+) -> None:
+    """완료된 학습 run 을 평가하고 ``eval_runs/seed<N>/`` 에 summary/CSV 저장.
+
+    ``train.py`` 의 ``--evaluate-after-train`` 경로와 ``evaluate.py`` 의
+    ``--run`` 경로가 공유한다.
+    """
+    run_dir = run_dir.resolve()
+    cfg_path = run_dir / "config.yaml"
+    cand = [run_dir / "best_model" / "best_model.zip", run_dir / "final_model.zip"]
+    model_path = next((p for p in cand if p.exists()), None)
+    if model_path is None:
+        raise FileNotFoundError(f"No best/final model in {run_dir}")
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"Missing config.yaml in {run_dir}")
+
+    cfg = load_config(cfg_path)
+    out_dir = run_dir / "eval_runs" / f"seed{eval_seed}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"[eval] model  = {model_path}")
+    print(f"[eval] config = {cfg_path}")
+
+    eval_env = build_eval_env(
+        cfg["env"], cfg.get("eval_env", {}), seed=eval_seed + 10_000
+    )
+    model = load_model(cfg, str(model_path), env=eval_env, device=device)
+
+    summary = evaluate_model(
+        model,
+        eval_env,
+        n_eval_episodes=n_eval_episodes,
+        deterministic=deterministic,
+        seed=eval_seed,
+    )
+    eval_env.close()
+
+    print(format_summary(summary, name=cfg["algo"]["name"]))
+
+    stem = _eval_artifact_stem(cfg, run_dir=run_dir)
+    json_path = out_dir / f"{stem}.json"
+    csv_path = out_dir / f"{stem.replace('summary_', 'episodes_', 1)}.csv"
+    payload = summary.to_dict(drop_lists=True)
+    payload["meta"] = {
+        "algo": _algo_slug(cfg),
+        "training_seed": str(_training_seed(run_dir)),
+        "total_timesteps": int(cfg.get("train", {}).get("total_timesteps", 0)),
+        "eval_seed": eval_seed,
+        "n_eval_episodes": n_eval_episodes,
+        "deterministic": deterministic,
+        "model_path": str(model_path),
+    }
+    json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+    write_episode_csv(
+        csv_path,
+        rewards=summary.rewards,
+        lengths=summary.lengths,
+        meta={
+            "algo": _algo_slug(cfg),
+            "training_seed": str(_training_seed(run_dir)),
+            "total_timesteps": str(cfg.get("train", {}).get("total_timesteps", "")),
+            "eval_seed": str(eval_seed),
+            "deterministic": str(deterministic),
+            "model_path": str(model_path),
+        },
+    )
+    print(f"[eval] saved  = {json_path}")
+    print(f"[eval] saved  = {csv_path}")
+
+
 def main() -> None:
     args = parse_args()
     model_path, cfg_path, run_dir = _resolve_run_artifacts(args)

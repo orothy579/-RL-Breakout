@@ -1,0 +1,8 @@
+# DQN axis A — large replay buffer.
+# 효과: 더 다양한 sample → off-policyness↑. Mnih 2015 1M 기준에 더 가까움.
+# 메모리: uint8 4x84x84 기준 약 14 GiB. RAM 확인 필요.
+inherits: ../dqn_baseline.yaml
+
+algo:
+  kwargs:
+    buffer_size: 300000

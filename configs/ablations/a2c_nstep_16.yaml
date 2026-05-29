@@ -1,0 +1,8 @@
+# A2C axis A — longer rollout.
+# 효과: n-step return bias↓ (긴 horizon 까지 실제 reward 반영), variance↑.
+# baseline 5 → 16. PPO 와 동일한 rollout 길이 비교 가능.
+inherits: ../a2c.yaml
+
+algo:
+  kwargs:
+    n_steps: 16

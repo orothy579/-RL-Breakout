@@ -1,0 +1,8 @@
+# A2C axis A — GAE 도입.
+# 효과: λ<1 → multi-step return 의 지수가중 평균. bias↑ variance↓.
+# baseline A2C 는 λ=1 (순수 n-step return).
+inherits: ../a2c.yaml
+
+algo:
+  kwargs:
+    gae_lambda: 0.95
